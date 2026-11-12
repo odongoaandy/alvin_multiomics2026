@@ -64,6 +64,47 @@ saying which. Columns: library size, number of features detected, fraction of
 zeros, the share held by the largest feature, Shannon diversity, and the
 effective number of features.*
 
+```{r per-sample-numbers}
+# One row per sample per table. Skip the first column of each table
+# (the feature names) so only sample columns are counted.
+per_sample_stats <- function(counts, table_name) {
+  x <- as.matrix(counts[, -1])                    # features in rows, samples in columns
+  lib   <- colSums(x)                             # library size: reads per sample
+  det   <- colSums(x > 0)                         # features with at least 1 read
+  p     <- sweep(x, 2, lib, "/")                  # each feature as a fraction of the sample
+  H     <- -colSums(p * log(p), na.rm = TRUE)     # Shannon diversity, natural log
+  tibble(
+    table            = table_name,
+    sample           = names(lib),
+    library_size     = lib,
+    features_detected= det,
+    fraction_zeros   = 1 - det / nrow(x),         # share of feature rows that are 0
+    share_largest    = apply(p, 2, max),          # biggest single-feature fraction
+    shannon          = H,
+    effective_number = exp(H)                     # species/genes if all were equally common
+  )
+}
+
+anatomy <- bind_rows(
+  per_sample_stats(species, "species"),
+  per_sample_stats(genes,   "genes")
+)
+
+anatomy
+```
+
+```{r save-species-shannon}
+# Keep the species rows, save sample and Shannon diversity as a CSV.
+dir.create(here("results"), showWarnings = FALSE)
+
+species_shannon <- anatomy |>
+  filter(table == "species") |>
+  select(sample, shannon)
+
+write_csv(species_shannon, here("results", "species_shannon.csv"))
+species_shannon
+```
+
 - Does it have 942 rows, 471 for each table?
   - *Your answer:*
 - Type `sum(species$P001_week_18)` in the console. Does it match Pi's library size for that sample?
@@ -77,6 +118,85 @@ Suggested request: *Under that data frame, add a summary table with the median,
 smallest and largest value of every column, separately for each table. Then
 write three sentences about anything unusual.*
 
+```{r summary-table}
+# Reshape so each metric becomes one row, then take three summaries per table.
+summary_tbl <- anatomy |>
+  pivot_longer(cols = -c(table, sample), names_to = "metric") |>
+  group_by(table, metric) |>
+  summarise(
+    median   = median(value),
+    smallest = min(value),
+    largest  = max(value),
+    .groups  = "drop"
+  ) |>
+  arrange(metric, table)
+
+summary_tbl
+```
+
+**Three things the summary says:**
+
+1. The 438-read sample is real: `species` library sizes run from 438 to 155,686
+   around a median of 28,700, so one sample has roughly 65 times fewer reads
+   than the median and every count in it is untrustworthy.
+2. The two tables are almost opposites in composition: about 89% of species
+   cells are zero (median 0.89) against about 1% of gene cells (0.00998), and a
+   single species holds the majority of a typical sample (median share 0.60)
+   while a typical gene holds 8%.
+3. Diversity is on different planets: a typical sample behaves like ~3.2
+   equally common species but ~1,050 equally expressed genes, and the richest
+   species sample reaches only 18.8 while the richest gene sample reaches
+   2,682 — so the two Shannon columns must never be compared directly.
+
+```{r save-step2-report}
+# Save the summary table and the three sentences as one markdown file.
+lines <- c(
+  "# Step 2 — per-sample summary and what looked unusual",
+  "",
+  knitr::kable(summary_tbl, digits = 3, format = "pipe"),
+  "",
+  "## Three things the summary says",
+  "",
+  "1. The 438-read sample is real: `species` library sizes run from 438 to 155,686",
+  "   around a median of 28,700, so one sample has roughly 65 times fewer reads",
+  "   than the median and every count in it is untrustworthy.",
+  "2. The two tables are almost opposites in composition: about 89% of species",
+  "   cells are zero (median 0.89) against about 1% of gene cells (0.00998), and a",
+  "   single species holds the majority of a typical sample (median share 0.60)",
+  "   while a typical gene holds 8%.",
+  "3. Diversity is on different planets: a typical sample behaves like ~3.2",
+  "   equally common species but ~1,050 equally expressed genes, and the richest",
+  "   species sample reaches only 18.8 while the richest gene sample reaches",
+  "   2,682 — so the two Shannon columns must never be compared directly."
+)
+writeLines(lines, here("results", "step2_summary.md"))
+write_csv(summary_tbl, here("results", "step2_summary.csv"))
+```
+
+```{r save-unusual-notes}
+# Three more unusual findings from the summary, saved as plain text.
+unusual_notes <- c(
+  "Three unusual things in the per-sample summary", "",
+  "1. Near-monocultures are the rule, not the exception, in the species table:",
+  "   50 of the 471 species samples have a single species holding more than 99%",
+  "   of the reads (e.g. P011_week_18: one species at 99.7%, only 4 species",
+  "   detected). In a pregnancy vaginal microbiome this is biology - usually one",
+  "   dominant Lactobacillus - not a mistake.",
+  "2. The gene table's problem children are single-gene dominators: one gene in",
+  "   P150_week_34 holds 32% of that sample (typical is 8%), dragging its Shannon",
+  "   to 5.0 against a median of 6.95. Worth checking whether that gene is real",
+  "   biology or an annotation/alignment artefact.",
+  "3. Depth and diversity track each other in the genes: even the worst gene",
+  "   sample saw 96% of all 14,226 genes, the opposite of the species table where",
+  "   samples saw as few as 4 of 220 species.", "",
+  "Checks:",
+  "- filter(share_largest > 0.99) returns 50 rows, all species",
+  "- filter(sample == \"P150_week_34\"): share_largest 0.324, shannon 5.00",
+  "- min(features_detected[table == \"genes\"]) / 14226 = 0.963"
+)
+writeLines(unusual_notes, here("results", "unusual_observations.txt"))
+```
+
 - Which medians were furthest from your Part 1 answers?
   - *Your answer:*
 - Did Pi mention the 438-read sample? Did it claim anything you cannot find in the table?
@@ -86,7 +206,59 @@ write three sentences about anything unusual.*
 
 Suggested request: *Plot the library size of every sample four ways: a
 histogram, the same histogram on a log scale, the samples ranked from smallest
-to largest, and library size by visit. Use both tables.*
+to largest, and library size by visit. Use both tables. Save the plots as PNG
+in the results folder.*
+
+```{r library-size-plots}
+# Centre plot titles (applies to every plot made below).
+theme_set(theme_gray() + theme(plot.title = element_text(hjust = 0.5)))
+
+# Add a visit column, parsed from the end of each sample name (week_18, ...).
+anatomy <- anatomy |>
+  mutate(visit = str_extract(sample, "week_\\d+"))
+
+# 1. Histogram, linear scale (one panel per table, because the scales differ ~1000x)
+p_hist <- ggplot(anatomy, aes(library_size, fill = table)) +
+  geom_histogram(bins = 40) +
+  facet_wrap(~table, scales = "free") +
+  labs(title = "Distribution of library size per sample",
+       x = "Library size (counts per sample)", y = "Number of samples") +
+  theme(legend.position = "none")
+
+# 2. Same histogram, log x-axis
+p_log <- p_hist +
+  scale_x_log10(labels = scales::comma) +
+  labs(title = "Distribution of library size, log scale")
+
+# 3. Samples ranked smallest to largest, within each table
+p_ranked <- anatomy |>
+  group_by(table) |>
+  mutate(rank = rank(library_size)) |>
+  ungroup() |>
+  ggplot(aes(rank, library_size, colour = table)) +
+  geom_point() +
+  labs(title = "Samples ranked from smallest to largest library size",
+       x = "Sample rank", y = "Library size")
+
+# 4. Library size by visit (boxplots)
+p_visit <- ggplot(anatomy, aes(visit, library_size, fill = table)) +
+  geom_boxplot() +
+  facet_wrap(~table, scales = "free_y") +
+  labs(title = "Library size by visit (species vs genes)", x = "Visit", y = "Library size") +
+  theme(legend.position = "none")
+
+p_hist
+p_log
+p_ranked
+p_visit
+
+# Save each as a 6 x 4 inch PNG in results/
+dir.create(here("results"), showWarnings = FALSE)
+ggsave(here("results", "library_size_histogram.png"),      p_hist,   width = 6, height = 4, dpi = 300)
+ggsave(here("results", "library_size_histogram_log.png"),  p_log,    width = 6, height = 4, dpi = 300)
+ggsave(here("results", "library_size_ranked.png"),         p_ranked, width = 6, height = 4, dpi = 300)
+ggsave(here("results", "library_size_by_visit.png"),       p_visit,  width = 6, height = 4, dpi = 300)
+```
 
 - Which view makes the 438-read sample obvious, and which hides it? Which would you put in a paper?
   - *Your answer:*

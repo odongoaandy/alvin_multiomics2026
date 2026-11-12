@@ -1,0 +1,21 @@
+Three unusual things in the per-sample summary
+
+1. Near-monocultures are the rule, not the exception, in the species table:
+   50 of the 471 species samples have a single species holding more than 99%
+   of the reads (e.g. P011_week_18: one species at 99.7%, only 4 species
+   detected). In a pregnancy vaginal microbiome this is biology - usually one
+   dominant Lactobacillus - not a mistake.
+
+2. The gene table's problem children are single-gene dominators: one gene in
+   P150_week_34 holds 32% of that sample (typical is 8%), dragging its Shannon
+   to 5.0 against a median of 6.95. Worth checking whether that gene is real
+   biology or an annotation/alignment artefact.
+
+3. Depth and diversity track each other in the genes: even the worst gene
+   sample saw 96% of all 14,226 genes, the opposite of the species table where
+   samples saw as few as 4 of 220 species.
+
+Checks:
+- filter(share_largest > 0.99) returns 50 rows, all species
+- filter(sample == "P150_week_34"): share_largest 0.324, shannon 5.00
+- min(features_detected[table == "genes"]) / 14226 = 0.963

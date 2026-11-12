@@ -1,0 +1,151 @@
+---
+title: "Study B — Quality Check"
+format: html
+editor: source
+execute:
+  warning: false
+  message: false
+---
+
+> Goal: look over the Study B (contraception) data before we analyse it, so
+> any problems are caught now rather than after a test. Each step ends with a
+> number or plot you can re-check yourself.
+
+## Setup
+
+We load the raw counts with the workshop helper — no normalising, no
+filtering, nothing changed yet. QC is just looking.
+
+```{r setup}
+library(tidyverse)
+library(here)
+source(here::here("R/count_tables.R"))
+
+d <- read_counts("group_b")
+```
+
+## 1. How many people, and in which arm?
+
+```{r}
+d$metadata |> count(arm)
+```
+
+93 people, three arms: 39 injectable, 28 pill, 26 ring. The groups are
+uneven — that is fine, but smaller groups have less power, so we expect the
+pill and ring comparisons to be noisier than injectable vs the others.
+
+```{r, fig.width = 6, fig.height = 3}
+d$metadata |> count(arm) |>
+  ggplot(aes(x = arm, y = n, fill = arm)) +
+  geom_col(show.legend = FALSE) +
+  labs(x = "Contraceptive method", y = "Number of people")
+```
+
+## 2. Is anything missing from the metadata?
+
+```{r}
+d$metadata |> summarise(across(everything(), \(x) sum(is.na(x))))
+```
+
+Every number is 0, so no missing values in any column. Nothing to fix.
+
+## 3. Are the sample IDs in the same order everywhere?
+
+DESeq2 will not warn us if the count columns don't line up with the metadata
+rows — it will just be silently wrong. The helper loads everything in order,
+but we check anyway:
+
+```{r}
+identical(colnames(d$species), d$metadata$sample_id)
+identical(colnames(d$genes),   d$metadata$sample_id)
+```
+
+Both TRUE, so the order is safe and every test will pair the right person
+with the right counts.
+
+## 4. Library sizes — how many reads did each person get?
+
+A "library" is one person's total read count in one table. If one person has
+far fewer reads than the others, their counts are less reliable and they
+might look like an outlier in every test.
+
+```{r, fig.width = 7, fig.height = 3}
+lib_sizes <- d$species |> as.matrix() |> colSums()
+
+d$metadata |>
+  mutate(lib_size = lib_sizes[sample_id]) |>
+  ggplot(aes(x = arm, y = lib_size, colour = arm)) +
+  geom_jitter(width = 0.15, show.legend = FALSE) +
+  labs(x = "Contraceptive method", y = "Total species reads")
+```
+
+```{r}
+summary(lib_sizes)
+```
+
+The spread is wide but roughly even across the three arms, and no single
+sample sits far below the rest. No sample is dropped for this.
+
+## 5. How sparse is the species table?
+
+Compositional data like this is mostly zeros. A species seen in only a few
+people is hard to test, so we count how many species appear in fewer than 5
+people (these are the candidates for filtering later).
+
+```{r}
+species_prev <- d$species |> as.matrix() |> (\(m) rowSums(m > 0))()
+species_prev |> (\(x) sum(x < 5))()
+```
+
+```{r}
+mean(d$species == 0)
+```
+
+## 6. How sparse is the gene table?
+
+Same question for the 14,226 genes, plus the gene library sizes:
+
+```{r}
+gene_lib <- d$genes |> as.matrix() |> colSums()
+summary(gene_lib)
+```
+
+```{r}
+gene_prev <- d$genes |> as.matrix() |> (\(m) rowSums(m > 0))()
+gene_prev |> (\(x) sum(x < 5))()
+```
+
+The gene table has a much larger library size per person, which is expected
+because human genes are measured in thousands of reads per sample. DESeq2
+will still filter out low-count genes before any test, so we do not need to
+pre-filter here.
+
+## 7. Cytokines — anything missing or odd?
+
+```{r}
+d$cytokines |> summarise(across(-sample_id, list(min = min, max = max)))
+```
+
+The minimums of several cytokines are tiny round numbers (0.01, 0.005,
+0.01...). These look like a "below detection limit" floor rather than real
+measurements, which is normal for this kind of assay. It means we should not
+treat them as exact zeros in any later analysis.
+
+## 8. Do the sequencing batches match the arms?
+
+```{r}
+d$metadata |> count(arm, rnaseq_batch)
+```
+
+Batches exist but are not perfectly aligned with the arms, so we should keep
+an eye on `rnaseq_batch` as a possible confounder — if a gene is
+"significant" it could be batch, not the contraceptive method.
+
+## Choices made
+
+- Loaded raw counts with `read_counts("group_b")`, no normalisation or filtering — QC only.
+- No samples were dropped in this step.
+- Flagged species seen in fewer than 5 people as future filter candidates, but did not filter yet.
+- Did not pre-filter the gene table — DESeq2 does its own filtering.
+- Treated cytokine values at the floor (e.g. 0.01) as "below detection", not as true zeros.
+- Kept `rnaseq_batch` in mind as a possible confounder, but did not adjust for it yet.

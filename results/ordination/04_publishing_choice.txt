@@ -1,0 +1,63 @@
+WHICH PLOT I WOULD PUBLISH, AND WHY
+(Species-level ordination, notebook 03, Exercise 1, Step 2)
+Datasets and numbers: 471 samples, 220 species, community = lactobacillus
+if Lactobacillus fraction >= 0.5 else anaerobe (data/my_sample_groups.csv).
+All numbers come from the same microViz pipeline as the PNGs in this folder
+and are also recorded in ordination_summary.csv.
+
+THE CHOICE: Aitchison (CLR transform + Euclidean distance) ordination.
+Publish the Aitchison PCoA coloured by community as the main figure, with its
+scree plot beside it. Put the three-distance comparison
+(03_three_distances_scree.png) in the supplement as the evidence for the choice.
+
+THREE REASONS, EACH WITH A NUMBER
+
+1. It is the honest distance for compositional data.
+   Species counts are shares of a fixed sequencing budget, so "this species is
+   rarer" can just mean "other species got more of the budget".
+   Aitchison (CLR + Euclidean) is built for that; Bray-Curtis inherits the
+   problem and Jaccard sidesteps it only by discarding abundance entirely.
+
+2. It shows the structure that is actually there, better than the others:
+   - most variation on axis 1:     31.7%  (Bray 27.5%, Jaccard 17.6%)
+   - axis 1 vs lacto_fraction:     |r| = 0.88  (Bray 0.29, Jaccard 0.75)
+   - PERMANOVA R2 for community:   0.207, p = 0.001  (Bray 0.200, Jaccard 0.095)
+   Its scree plot has one tall bar, so the 2D view published carries most of
+   the signal. Jaccard's scree spreads variation over many small bars.
+
+3. It survives the reviewer check: axis 1 is NOT tracking library size
+   (|r| = 0.24), so the ordination is not an artefact of sequencing depth.
+
+CAVEATS (recorded for the "Choices made" section)
+- ~89% of the species table is zeros. CLR cannot take log(0), so zeros must be
+  handled somehow. The published figures use microViz tax_transform("clr"),
+  which handles zeros internally. A hand-rolled check with a +0.5 pseudocount
+  gave similar conclusions but slightly different percentages (e.g. axis 1
+  31.7% vs 27.5%) - that is the pseudocount fudge showing up.
+- PCoA axis signs are arbitrary: a rerun can flip left/right or
+  positive/negative. Compare magnitudes (|r|, R2), not signs.
+
+ALTERNATIVES NOT CHOSEN (one line each, for "Choices made")
+- Bray-Curtis: the microbiome default, but its abundances are confounded by
+  compositionality, and the community split is smeared over two axes
+  (27.5% / 21.3%).
+- Jaccard (presence/absence): discards abundance, so it separates the community
+  groups least (R2 = 0.095) and no single axis carries the signal.
+- Untransformed Euclidean on counts: dominated by the most abundant species,
+  effectively redundant with the above; not shown.
+
+REFERENCES
+- Gloor GB, Macklaim JM, Pawlowsky-Glahn V, Egozcue JJ (2017).
+  Microbiome Datasets Are Compositional: And This Is Not Optional.
+  Frontiers in Microbiology 8:2224. https://doi.org/10.3389/fmicb.2017.02224
+- Cattell RB (1966). The Scree Test For The Number Of Factors.
+  Multivariate Behavioral Research 1:245-276.
+  https://doi.org/10.1016/0092-6566(66)90022-6
+- microViz dist_calc() documentation:
+  https://david-barnett.github.io/microViz/reference/dist_calc.html
+
+FILES IN THIS FOLDER THAT BACK THIS UP
+- 01_bray_pcoa_community.png      Step 1 ordination
+- 02_three_distances.png          three ordinations side by side
+- 03_three_distances_scree.png    ordinations + scree plots
+- ordination_summary.csv          all numbers quoted above

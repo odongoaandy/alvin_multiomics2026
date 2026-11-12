@@ -1,0 +1,4 @@
+distance,transform,plot_file,pcoa1_pct,pcoa2_pct,cor_axis1_lacto_fraction,cor_axis1_library_size,permanova_r2_community,permanova_p_community,n_samples,n_taxa,note
+bray,identity,01_bray_pcoa_community.png (also panel 1 of 02),27.5,21.3,0.288,-0.003,0.2,0.001,471,220,"no transform; PCoA axis sign is arbitrary, correlation sign may flip between runs"
+jaccard,binary,"02_three_distances.png, panel 2",17.6,6.4,-0.749,0.112,0.095,0.001,471,220,"no transform; PCoA axis sign is arbitrary, correlation sign may flip between runs"
+euclidean,clr,"02_three_distances.png, panel 3",31.7,8.5,-0.875,0.235,0.207,0.001,471,220,"microViz tax_transform('clr') handles zeros internally; PCoA axis sign is arbitrary, correlation sign may flip between runs"

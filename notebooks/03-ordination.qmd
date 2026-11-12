@@ -83,7 +83,7 @@ PCoA with microViz at the species level and colour it by `community`. Put the
 share of variation on each axis title.*
 
 - How many points are on the plot, and how many samples have no `community` value?
-  - *Your answer:*
+  - *Your answer:* 471
 
 ### Step 2: three distances, side by side
 

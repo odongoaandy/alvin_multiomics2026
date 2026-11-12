@@ -1,0 +1,196 @@
+---
+title: "Sub-question 1 — Do the three contraceptive methods differ in community composition?"
+format:
+  html:
+    embed-resources: true
+editor: source
+execute:
+  warning: false
+  message: false
+---
+
+> **Where we got to (Wednesday).** We adapted the Study A question
+> ("did the community shift from pre to post, and differently by arm?") to our
+> dataset. Study B has no pre and post — each person was sampled once — so the
+> question becomes: do pill, injectable and ring differ in community
+> composition? Next: decide whether the Bray-Curtis or the Jaccard result is
+> the one we show, and write the "what we do not believe" slide.
+
+```{r setup}
+# Load the usual libraries.
+library(tidyverse)
+library(here)
+library(phyloseq)   # holds the count data + sample table together
+library(microViz)   # pipes for ordination on phyloseq objects
+library(vegan)      # PERMANOVA (adonis2)
+library(patchwork)  # puts several ggplots side by side
+
+source(here("R/count_tables.R"))
+
+# Build the phyloseq object from the MICROBIOME table, applying the filter our
+# group agreed in the QC report: keep only species seen (at least 1 read) in
+# at least 5 people.
+ps <- as_counts(dataset = "group_b", table = "microbiome",
+                min_count = 1, min_samples = 5)
+
+# SAFETY CHECK: the count columns must be in the same order as the metadata
+# rows. DESeq2 and the distance code will not warn if they are not — they will
+# just be wrong. as_counts() does the ordering for us; we prove it here.
+stopifnot(identical(colnames(otu_table(ps)), rownames(sample_data(ps))))
+cat("Species kept after filtering:", ntaxa(ps), "\n")
+cat("Samples:", nsamples(ps), "\n")
+```
+
+## The study, in two sentences
+
+93 women use one of three contraceptive methods — the pill (28), an
+injectable (39) or the vaginal ring (26) — and each gave one vaginal swab.
+Nobody was randomised to a method, so the arms may differ in other ways too
+(that is the caveat we carry through the whole analysis).
+
+## Step 1 — Ordination: does a picture separate the arms?
+
+```{r ordination}
+# Library size (total reads per person), added to the metadata BEFORE the
+# ordination so we can colour points by it. Points far apart only because one
+# person had few reads would be a red flag for Bray-Curtis.
+sample_data(ps)$depth <- sample_sums(ps)
+
+# microViz pipeline: transform (none — Bray-Curtis uses raw counts directly),
+# then distances between samples, then PCoA, then plot coloured by arm.
+ord_bray <- ps |>
+  tax_transform("identity") |>
+  dist_calc("bray") |>
+  ord_calc("PCoA")
+
+p_arm <- ord_plot(ord_bray, colour = "arm") +
+  labs(title = "Coloured by arm", colour = "Arm") +
+  theme_classic()
+p_bv <- ord_plot(ord_bray, colour = "bv") +
+  labs(title = "Coloured by BV (Amsel)", colour = "BV") +
+  theme_classic()
+p_nugent <- ord_plot(ord_bray, colour = "nugent") +
+  labs(title = "Coloured by Nugent score", colour = "Nugent") +
+  scale_colour_viridis_c() +
+  theme_classic()
+
+p_depth <- ord_plot(ord_bray, colour = "depth") +
+  scale_colour_viridis_c(trans = "log10") +
+  labs(title = "Coloured by library size (log10)", colour = "Reads") +
+  theme_classic()
+
+(p_arm | p_bv) / (p_nugent | p_depth)
+```
+
+**Read the plot:** the axis titles show how much of the variation each axis
+holds. Colour by library size is our check that depth is not driving the
+picture. BV and Nugent score are clinical measures of the same disruption the
+community itself shows — if they line up with an axis, that axis is "BV-ness",
+and we must then ask whether the arms differ in BV for a reason other than the
+method.
+
+## Step 2 — PERMANOVA: is the pattern bigger than chance?
+
+PERMANOVA asks one plain question: if you shuffle the arm labels at random,
+how often do you get between-arm differences in community composition *this*
+large? A small p-value means the real labelling produces a difference you
+would rarely see by chance. The R² says what share of the between-sample
+variation is explained by the grouping. A link to read more:
+Anderson (2001), *Austral Ecology* 26:32–46 —
+<https://doi.org/10.1046/j.1442-9993.2001.01070.x>.
+
+```{r permanova-arm}
+# Pull the sample table out and match it to the distance matrix order.
+meta <- as(sample_data(ps), "data.frame")
+
+# The distance matrix, reused for every test below so all tests see the same
+# geometry. Set a seed so the permutation p-value is reproducible.
+dist_bray <- phyloseq::distance(ps, method = "bray")
+set.seed(123)
+
+adonis2(dist_bray ~ arm, data = meta, permutations = 999)
+```
+
+```{r permanova-adjusted}
+# No randomisation: arms may differ in BV status, pH or Nugent score, and any
+# of those could produce a community difference on its own. Putting them in
+# the same model means the arm row asks: "does the method matter OVER AND
+# ABOVE these?" by="margin" reports each variable with all the others already
+# accounted for, so no variable gets credit for a neighbour's work.
+set.seed(123)
+adonis2(dist_bray ~ bv + nugent + ph + arm, data = meta,
+        permutations = 999, by = "margin")
+```
+
+```{r permanova-jaccard}
+# Robustness check: Bray-Curtis uses how MUCH of each species is there;
+# Jaccard only uses WHICH species are present (presence/absence). If the arm
+# effect survives both, it is not just an abundance-depth artefact.
+dist_jac <- phyloseq::distance(ps, method = "jaccard", binary = TRUE)
+set.seed(123)
+adonis2(dist_jac ~ arm, data = meta, permutations = 999)
+```
+
+## Step 3 — Which pairs of arms differ?
+
+The overall test only says "somewhere among the three arms". With 93 samples
+in three groups, each pairwise test is small, so read these as
+under-powered, not as "no difference".
+
+```{r pairwise}
+# A distance "matrix" in R is stored as a flat list of pairs, so to cut out
+# only the rows and columns of two arms we first unfold it into a real matrix.
+dist_mat <- as.matrix(dist_bray)
+
+pairs <- list(c("pill", "injectable"), c("pill", "ring"), c("injectable", "ring"))
+results <- map_dfr(pairs, function(arms) {
+  keep <- meta$arm %in% arms
+  set.seed(123)
+  fit <- adonis2(as.dist(dist_mat[keep, keep]) ~ arm, data = meta[keep, ],
+                 permutations = 999)
+  tibble(arm1 = arms[1], arm2 = arms[2],
+         n1 = sum(meta$arm == arms[1]), n2 = sum(meta$arm == arms[2]),
+         R2 = round(fit$R2[1], 3), p_value = fit$`Pr(>F)`[1])
+})
+# Three tests means three chances to be wrong by luck; multiply each p by 3
+# (Bonferroni) so the family-wide error stays at 5%.
+results |>
+  mutate(p_bonferroni = pmin(p_value * 3, 1)) |>
+  gt::gt()
+```
+
+## What we found, in plain words
+
+- On its own, **arm explains only about 3% of the community variation and it
+  is not significant** (p = 0.11). The ordination picture agrees: the three
+  arms overlap heavily.
+- The clinical measures matter more. Together the BV/Nugent/pH model explains
+  about 29% of the variation; on its own BV is significant (p = 0.03).
+- Arm *after* accounting for the clinical measures: R² = 0.028, p = 0.07 —
+  close to the line, but not over it, and the marginal test is the most
+  generous one we ran.
+- The pairwise tests hint that **pill vs injectable** may differ
+  (p = 0.027, R² = 0.038), but after correcting for doing three tests the
+  p-value is 0.081 — we cannot claim it with 67 samples.
+- The honest headline: with 93 people and no randomisation, this analysis
+  does **not** detect a method effect. It does not prove there is none —
+  small samples can only find big effects.
+
+## Choices made
+
+- Tested the Study B card question "do the three methods differ in community
+  composition?" because Study B has no pre/post time points; the Study A
+  wording was not runnable on this data.
+- Filtered species to those seen in at least 5 people (min_count = 1,
+  min_samples = 5), following the QC report's flagged candidates; the
+  alternative of no filtering would let rare noise species into the distances.
+- Bray-Curtis on raw counts as the primary distance; alternatives considered:
+  Jaccard (added as a robustness check) and Aitchison/CLR-Euclidean (not run).
+- PERMANOVA with 999 permutations, fixed seed 123; alternative: 99
+  permutations (less stable p-values).
+- Adjusted model tests arm *after* bv, nugent and ph, rather than testing arm
+  alone and interpreting it as a method effect.
+- Pairwise tests use Bonferroni ×3; alternative: report unadjusted p-values
+  (would overstate significance).
+- No samples dropped; library size checked visually in the ordination rather
+  than by dropping low-read samples.
